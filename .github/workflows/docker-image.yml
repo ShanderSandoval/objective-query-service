@@ -15,27 +15,27 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up SSH key and known hosts
-        shell: pwsh
+        shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.ssh"
-          Set-Content -Path "$env:USERPROFILE\.ssh\id_rsa" -Value "${{ secrets.EC2_SSH_KEY }}"
-          icacls "$env:USERPROFILE\.ssh\id_rsa" /inheritance:r /grant:r "${env:USERNAME}:F"
+          "${{ secrets.EC2_SSH_KEY }}" | Out-File -Encoding ASCII "$env:USERPROFILE\.ssh\id_rsa"
+          icacls "$env:USERPROFILE\.ssh\id_rsa" /grant "${env:USERNAME}:F"
           ssh-keyscan -H ${{ secrets.HOST_DNS }} | Out-File -Append -Encoding ASCII "$env:USERPROFILE\.ssh\known_hosts"
 
       - name: Install Docker on Windows
-        shell: pwsh
+        shell: powershell
         run: |
           choco install docker-cli -y
           Start-Service docker
 
       - name: Build Docker image
-        shell: pwsh
+        shell: powershell
         run: |
           docker build -t ${{ secrets.DOCKER_IMAGE_NAME }}:latest .
           docker save -o app.tar ${{ secrets.DOCKER_IMAGE_NAME }}:latest
 
       - name: Check if app.tar exists
-        shell: pwsh
+        shell: powershell
         run: |
           if (!(Test-Path "app.tar")) {
             Write-Host "❌ ERROR: El archivo app.tar no existe."
