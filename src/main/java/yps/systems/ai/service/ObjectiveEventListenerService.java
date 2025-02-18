@@ -16,10 +16,12 @@ import java.util.Optional;
 public class ObjectiveEventListenerService {
 
     private final IObjectiveRepository objectiveRepository;
+    private final ObjectMapper objectMapper;
 
     @Autowired
-    public ObjectiveEventListenerService(IObjectiveRepository objectiveRepository) {
+    public ObjectiveEventListenerService(IObjectiveRepository objectiveRepository, ObjectMapper objectMapper) {
         this.objectiveRepository = objectiveRepository;
+        this.objectMapper = objectMapper;
     }
 
     @KafkaListener(topics = "${env.kafka.topicEvent}")
@@ -28,7 +30,7 @@ public class ObjectiveEventListenerService {
         switch (eventType) {
             case "CREATE_OBJECTIVE":
                 try {
-                    Objective objective = new ObjectMapper().readValue(payload, Objective.class);
+                    Objective objective = objectMapper.readValue(payload, Objective.class);
                     objectiveRepository.save(objective);
                 } catch (JsonProcessingException e) {
                     System.err.println("Error parsing Objective JSON: " + e.getMessage());
@@ -36,7 +38,7 @@ public class ObjectiveEventListenerService {
                 break;
             case "UPDATE_OBJECTIVE":
                 try {
-                    Objective objective = new ObjectMapper().readValue(payload, Objective.class);
+                    Objective objective = objectMapper.readValue(payload, Objective.class);
                     Optional<Objective> optionalObjective = objectiveRepository.findById(objective.getId());
                     optionalObjective.ifPresent(existingPerson -> objectiveRepository.save(objective));
                 } catch (JsonProcessingException e) {
