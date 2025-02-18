@@ -1,4 +1,4 @@
-name: Deploy Docker to EC2 (Windows)
+name: Install Docker on Windows EC2
 
 on:
   push:
@@ -6,90 +6,25 @@ on:
       - main
 
 jobs:
-  deploy:
-    name: Deploy Docker App on EC2 (Windows)
-    runs-on: windows-latest
-
+  install-docker:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up SSH key and known hosts
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.ssh"
-          "${{ secrets.EC2_SSH_KEY }}" | Out-File -Encoding ASCII "$env:USERPROFILE\.ssh\id_rsa"
-          icacls "$env:USERPROFILE\.ssh\id_rsa" /grant "${env:USERNAME}:F"
-          ssh-keyscan -H ${{ secrets.HOST_DNS }} | Out-File -Append -Encoding ASCII "$env:USERPROFILE\.ssh\known_hosts"
-
-      - name: Install Docker on Windows
-        shell: powershell
-        run: |
-          choco install docker-cli -y
-          Start-Service docker
-
-      - name: Build Docker image
-        shell: powershell
-        run: |
-          docker build -t ${{ secrets.DOCKER_IMAGE_NAME }}:latest .
-          docker save -o app.tar ${{ secrets.DOCKER_IMAGE_NAME }}:latest
-
-      - name: Check if app.tar exists
-        shell: powershell
-        run: |
-          if (!(Test-Path "app.tar")) {
-            Write-Host "❌ ERROR: El archivo app.tar no existe."
-            exit 1
-          } else {
-            Write-Host "✅ Archivo app.tar encontrado."
-          }
-
-      - name: Transfer Docker image to EC2
-        uses: appleboy/scp-action@master
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          host: ${{ secrets.HOST_DNS }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "app.tar"
-          target: "${{ secrets.TARGET_DIR }}"
-          rm: true  # Elimina archivos previos antes de copiar
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Run Docker container on EC2
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.HOST_DNS }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            echo "📌 Verificando e instalando Docker en EC2..."
-            sudo apt-get remove -y containerd || true
-            sudo apt-get update -y
-            sudo apt-get install -y ca-certificates curl gnupg lsb-release
-            sudo mkdir -m 0755 -p /etc/apt/keyrings
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
-            sudo chmod a+r /etc/apt/keyrings/docker.asc
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-            sudo apt-get update -y
-            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            echo "📌 Otorgando permisos al directorio destino..."
-            sudo chmod -R 777 ${{ secrets.TARGET_DIR }}
-            echo "📌 Cargando la imagen Docker..."
-            sudo docker load -i ${{ secrets.TARGET_DIR }}/app.tar
-            echo "📌 Verificando si el contenedor ya existe..."
-            if sudo docker ps -a --format '{{.Names}}' | grep -q "^${{ secrets.DOCKER_IMAGE_NAME }}$"; then
-              echo "📌 Deteniendo y eliminando el contenedor existente..."
-              sudo docker stop ${{ secrets.DOCKER_IMAGE_NAME }} || true
-              sudo docker rm ${{ secrets.DOCKER_IMAGE_NAME }} || true
-            else
-              echo "📌 No hay contenedor antiguo. Continuando con el despliegue..."
-            fi
-            echo "📌 Iniciando el nuevo contenedor con variables de entorno..."
-            sudo docker run -d \
-              --name ${{ secrets.DOCKER_IMAGE_NAME }} \
-              -p 80:10072 \
-              -e SPRING_DATA_MONGODB_DATABASE=${{ secrets.SPRING_DATA_MONGODB_DATABASE }} \
-              -e SPRING_DATA_MONGODB_URI=${{ secrets.SPRING_DATA_MONGODB_URI }} \
-              -e SPRING_DATA_MONGODB_AUTHENTICATION-DATABASE=${{ secrets.SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE }} \
-              -e SPRING_KAFKA_BOOTSTRAP-SERVERS=${{ secrets.SPRING_KAFKA_BOOTSTRAP_SERVERS }} \
-              ${{ secrets.DOCKER_IMAGE_NAME }}:latest
-            echo "✅ Despliegue completado con Docker 🚀"
+      - name: Start EC2 Session Manager and Install Docker
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunPowerShellScript" \
+            --targets "[{\"Key\":\"InstanceIds\",\"Values\":[\"${{ secrets.INSTANCE_ID }}\"]}]" \
+            --parameters 'commands=["iex ((New-Object System.Net.WebClient).DownloadString(''https://get.docker.com''))", "Start-Service docker"]' \
+            --comment "Installing Docker on Windows EC2" \
+            --timeout-seconds 600 \
+            --region ${{ secrets.AWS_REGION }}
